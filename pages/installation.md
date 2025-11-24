@@ -75,7 +75,8 @@ appropriate binary name.
 1. [Vanilla Emacs with lsp-mode](#vanilla-emacs-with-lsp-mode)
 2. [Vanilla Emacs with eglot](#vanilla-emacs-with-eglot)
 3. [Visual Studio Code](#visual-studio-code)
-4. [neovim](#neovim)
+4. [Cursor](#cursor)
+5. [neovim](#neovim)
 7. [Vim + Vim-LSP](#vim--vim-lsp)
 8. [Helix](#helix)
 9. [Sublime Text](#sublime-text)
@@ -154,12 +155,30 @@ for Eglot:
 Click on the extensions button on the sidebar, then search for
 `lexical`, then click `install`.
 
-This is a stop gap until we create a dedicated Expert extension, so you'll need to configure it to
-use the Expert executable instead. 
+This is a stop gap until we create a dedicated Expert extension, so you'll need
+to configure it to use the Expert executable instead.
 
-To change to a local executable, go to `Settings -> Extensions -> Lexical` and
-type `/my/home/projects/expert/apps/expert/burrito_out/expert_linux_amd64` into the text box in
-the `Server: Release path override` section.
+First, you need to create a wrapper script for launching Expert. You may put
+this anywhere you like, in this example we have it under
+`/my/home/bin/start_expert.sh`. In this script make sure you use the full path to
+the Expert binary you just built or the release you downloaded and make
+the script executable.
+
+```shell
+#!/bin/sh
+
+exec "/my/home/projects/expert/apps/expert/burrito_out/expert_linux_amd64" --stdio
+```
+
+Back in Visual Studio Code, to change the Lexical extension to a local
+executable, go to `Settings -> Extensions -> Lexical` and type the path to your
+script `/my/home/bin/start_expert.sh` into the text box in the
+`Server: Release path override` section.
+
+### Cursor
+
+Since Cursor is a fork of Visual Studio Code you may follow the
+[same steps as above](#visual-studio-code) to install Expert.
 
 ### Neovim
 
