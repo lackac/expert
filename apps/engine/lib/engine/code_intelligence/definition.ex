@@ -125,6 +125,25 @@ defmodule Engine.CodeIntelligence.Definition do
     maybe_fallback_to_elixir_sense(resolved, locations, analysis, position)
   end
 
+  defp fetch_definition(
+         {:struct_field, struct_module, field_name} = _resolved,
+         %Analysis{} = analysis,
+         %Position{} = position
+       ) do
+    case Engine.CodeIntelligence.StructFieldLocator.locate(struct_module, field_name) do
+      {:ok, location} ->
+        {:ok, location}
+
+      {:error, _} ->
+        # Fallback to struct definition if field not found
+        Logger.info(
+          "Could not find field #{field_name} in #{Formats.module(struct_module)}, falling back to struct definition"
+        )
+
+        fetch_definition({:struct, struct_module}, analysis, position)
+    end
+  end
+
   defp fetch_definition(_, %Analysis{} = analysis, %Position{} = position) do
     elixir_sense_definition(analysis, position)
   end

@@ -23,6 +23,7 @@ defmodule Engine.CodeIntelligence.Entity do
           | {:protocol_callback, protocol_module :: maybe_module(), callback_name :: atom(),
              arity :: non_neg_integer()}
           | {:protocol, maybe_module()}
+          | {:struct_field, maybe_module(), field_name :: atom()}
 
   defguardp is_call(form) when Sourceror.Identifier.is_call(form) and elem(form, 0) != :.
 
@@ -83,29 +84,36 @@ defmodule Engine.CodeIntelligence.Entity do
   defp resolve({:local_or_var, chars}, node_range, analysis, position) do
     maybe_fun = List.to_atom(chars)
 
-    case Ast.path_at(analysis, position) do
-      {:ok, [{^maybe_fun, _, nil} = local, {def, _, [local | _]} | _]}
-      when def in [:def, :defp, :defmacro, :defmacrop] ->
-        # This case handles resolving calls that come from zero-arg definitions in
-        # a module, like hovering in `def my_fun| do`
-        {:ok, module} = Engine.Analyzer.current_module(analysis, position)
-        {:ok, {:call, module, maybe_fun, 0}, node_range}
+    # Check if this is a struct field key
+    case resolve_struct_field_key(chars, node_range, analysis, position) do
+      {:ok, _resolved, _range} = result ->
+        result
 
-      {:ok, [{^maybe_fun, _, args} | _]} ->
-        # imported functions
-        arity =
-          case args do
-            arg_list when is_list(arg_list) -> length(arg_list)
-            _ -> 0
-          end
+      :not_struct_field ->
+        case Ast.path_at(analysis, position) do
+          {:ok, [{^maybe_fun, _, nil} = local, {def, _, [local | _]} | _]}
+          when def in [:def, :defp, :defmacro, :defmacrop] ->
+            # This case handles resolving calls that come from zero-arg definitions in
+            # a module, like hovering in `def my_fun| do`
+            {:ok, module} = Engine.Analyzer.current_module(analysis, position)
+            {:ok, {:call, module, maybe_fun, 0}, node_range}
 
-        case fetch_module_for_function(analysis, position, maybe_fun, arity) do
-          {:ok, module} -> {:ok, {:call, module, maybe_fun, arity}, node_range}
-          _ -> {:ok, {:variable, List.to_atom(chars)}, node_range}
+          {:ok, [{^maybe_fun, _, args} | _]} ->
+            # imported functions
+            arity =
+              case args do
+                arg_list when is_list(arg_list) -> length(arg_list)
+                _ -> 0
+              end
+
+            case fetch_module_for_function(analysis, position, maybe_fun, arity) do
+              {:ok, module} -> {:ok, {:call, module, maybe_fun, arity}, node_range}
+              _ -> {:ok, {:variable, List.to_atom(chars)}, node_range}
+            end
+
+          _ ->
+            {:ok, {:variable, List.to_atom(chars)}, node_range}
         end
-
-      _ ->
-        {:ok, {:variable, List.to_atom(chars)}, node_range}
     end
   end
 
@@ -191,6 +199,37 @@ defmodule Engine.CodeIntelligence.Entity do
 
   defp resolve(context, _node_range, _analysis, _position) do
     {:error, {:unsupported, context}}
+  end
+
+  # Resolves struct field keys like %User{name: "value"}
+  # Returns {:ok, {:struct_field, module, field}, range} or :not_struct_field
+  defp resolve_struct_field_key(chars, node_range, analysis, position) do
+    field_name = List.to_atom(chars)
+
+    with true <- Forge.Ast.Detection.StructFieldKey.detected?(analysis, position),
+         {:ok, struct_module} <- extract_struct_module(analysis, position) do
+      {:ok, {:struct_field, struct_module, field_name}, node_range}
+    else
+      _ -> :not_struct_field
+    end
+  end
+
+  # Extracts the struct module from the cursor path
+  # e.g., %User{name: "value"} -> User
+  defp extract_struct_module(analysis, position) do
+    cursor_path = Ast.cursor_path(analysis, position)
+
+    # Find the % node which contains the struct alias
+    case Enum.find(cursor_path, fn
+           {:%, _, _} -> true
+           _ -> false
+         end) do
+      {:%, _, [alias_node | _]} ->
+        expand_alias(alias_node, analysis, position)
+
+      _ ->
+        :error
+    end
   end
 
   defp resolve_alias(charlist, node_range, analysis, position) do
