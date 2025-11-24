@@ -76,6 +76,55 @@ defmodule Engine.CodeIntelligence.Definition do
     maybe_fallback_to_elixir_sense(resolved, locations, analysis, position)
   end
 
+  defp fetch_definition(
+         {:protocol_callback, protocol_module, callback_name, arity} = resolved,
+         %Analysis{} = analysis,
+         %Position{} = position
+       ) do
+    # Query for @callback in the protocol module
+    callback_subject = "#{Formats.module(protocol_module)}.@callback.#{callback_name}/#{arity}"
+
+    locations =
+      case Store.exact(callback_subject, type: {:module_attribute, :callback}) do
+        {:ok, entries} ->
+          for entry <- entries,
+              result = to_location(entry),
+              match?({:ok, _}, result) do
+            {:ok, location} = result
+            location
+          end
+
+        _ ->
+          []
+      end
+
+    maybe_fallback_to_elixir_sense(resolved, locations, analysis, position)
+  end
+
+  defp fetch_definition(
+         {:protocol, protocol_module} = resolved,
+         %Analysis{} = analysis,
+         %Position{} = position
+       ) do
+    module = Formats.module(protocol_module)
+
+    locations =
+      case Store.exact(module, type: {:protocol, :definition}) do
+        {:ok, entries} ->
+          for entry <- entries,
+              result = to_location(entry),
+              match?({:ok, _}, result) do
+            {:ok, location} = result
+            location
+          end
+
+        _ ->
+          []
+      end
+
+    maybe_fallback_to_elixir_sense(resolved, locations, analysis, position)
+  end
+
   defp fetch_definition(_, %Analysis{} = analysis, %Position{} = position) do
     elixir_sense_definition(analysis, position)
   end

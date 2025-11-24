@@ -20,6 +20,9 @@ defmodule Engine.CodeIntelligence.Entity do
           | {:type, maybe_module(), type_name :: atom(), arity :: non_neg_integer()}
           | {:module_attribute, container_module :: maybe_module(), attribute_name :: atom()}
           | {:variable, variable_name :: atom()}
+          | {:protocol_callback, protocol_module :: maybe_module(), callback_name :: atom(),
+             arity :: non_neg_integer()}
+          | {:protocol, maybe_module()}
 
   defguardp is_call(form) when Sourceror.Identifier.is_call(form) and elem(form, 0) != :.
 
@@ -150,10 +153,22 @@ defmodule Engine.CodeIntelligence.Entity do
     fun = List.to_atom(fun_chars)
 
     with {:ok, path} <- Ast.path_at(analysis, position),
-         arity = arity_at_position(path, position),
-         {module, ^fun, ^arity} <-
-           Engine.Analyzer.resolve_local_call(analysis, position, fun, arity) do
-      {:ok, {:call, module, fun, arity}, node_range}
+         arity = arity_at_position(path, position) do
+      # Check if we're in a defimpl block first
+      case resolve_protocol_callback(analysis, position, fun, arity) do
+        {:ok, protocol_module} ->
+          {:ok, {:protocol_callback, protocol_module, fun, arity}, node_range}
+
+        _ ->
+          case Engine.Analyzer.resolve_local_call(analysis, position, fun, arity) do
+            {module, ^fun, ^arity} ->
+              {:ok, {:call, module, fun, arity}, node_range}
+
+            _ ->
+              module = current_module(analysis, position)
+              {:ok, {:call, module, fun, 0}, node_range}
+          end
+      end
     else
       _ ->
         module = current_module(analysis, position)
@@ -182,9 +197,17 @@ defmodule Engine.CodeIntelligence.Entity do
     {{_line, start_column}, _} = node_range
 
     with false <- suffix_contains_module?(charlist, start_column, position),
-         {:ok, path} <- Ast.path_at(analysis, position),
-         :struct <- kind_of_alias(path) do
-      resolve_struct(charlist, node_range, analysis, position)
+         {:ok, path} <- Ast.path_at(analysis, position) do
+      case kind_of_alias(path) do
+        :struct ->
+          resolve_struct(charlist, node_range, analysis, position)
+
+        :protocol ->
+          resolve_protocol(charlist, node_range, analysis, position)
+
+        _ ->
+          resolve_module(charlist, node_range, analysis, position)
+      end
     else
       _ ->
         resolve_module(charlist, node_range, analysis, position)
@@ -475,6 +498,9 @@ defmodule Engine.CodeIntelligence.Entity do
     :struct
   end
 
+  # defimpl |Protocol
+  defp kind_of_alias([{:__aliases__, _, _}, {:defimpl, _, _} | _]), do: :protocol
+
   # Catch-all:
   defp kind_of_alias(_), do: :module
 
@@ -538,6 +564,74 @@ defmodule Engine.CodeIntelligence.Entity do
     case Zipper.up(zipper) do
       %Zipper{node: {:&, _, _}} -> true
       _ -> false
+    end
+  end
+
+  # Resolves a protocol implementation's callback to the protocol module
+  defp resolve_protocol_callback(%Analysis{} = analysis, %Position{} = position, fun, arity) do
+    with {:ok, path} <- Ast.path_at(analysis, position),
+         true <- in_defimpl_block?(path),
+         {:ok, protocol_module} <- get_protocol_module(analysis, position),
+         true <- is_protocol?(protocol_module),
+         true <- has_callback?(protocol_module, fun, arity) do
+      {:ok, protocol_module}
+    else
+      _ -> :error
+    end
+  end
+
+  # Checks if the current AST path is inside a defimpl block
+  defp in_defimpl_block?(path) do
+    Enum.any?(path, fn
+      {:defimpl, _, _} -> true
+      _ -> false
+    end)
+  end
+
+  # Gets the protocol module from @protocol implicit alias in defimpl blocks
+  defp get_protocol_module(%Analysis{} = analysis, %Position{} = position) do
+    aliases = Engine.Analyzer.aliases_at(analysis, position)
+
+    case Map.fetch(aliases, :"@protocol") do
+      {:ok, protocol_segments} when is_list(protocol_segments) ->
+        {:ok, Module.concat(protocol_segments)}
+
+      {:ok, protocol_module} when is_atom(protocol_module) ->
+        {:ok, protocol_module}
+
+      _ ->
+        :error
+    end
+  end
+
+  # Checks if a module is a protocol using runtime introspection
+  defp is_protocol?(module) when is_atom(module) do
+    function_exported?(module, :__protocol__, 1)
+  end
+
+  defp is_protocol?(_), do: false
+
+  # Checks if a protocol has a specific callback
+  defp has_callback?(protocol_module, fun, arity) when is_atom(protocol_module) do
+    try do
+      callbacks = protocol_module.__protocol__(:functions)
+      {fun, arity} in callbacks
+    rescue
+      _ -> false
+    end
+  end
+
+  defp has_callback?(_, _, _), do: false
+
+  # Resolves a protocol module from an alias
+  defp resolve_protocol(charlist, node_range, analysis, %Position{} = position) do
+    with {:ok, protocol_module} <- expand_alias(charlist, analysis, position),
+         true <- is_protocol?(protocol_module) do
+      {:ok, {:protocol, protocol_module}, node_range}
+    else
+      _ ->
+        # Fall back to regular module resolution if not a protocol
+        resolve_module(charlist, node_range, analysis, position)
     end
   end
 end
