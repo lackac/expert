@@ -1,6 +1,7 @@
 defmodule Forge.Ast.Analysis.State do
   alias Forge.Ast.Analysis
   alias Forge.Ast.Analysis.Alias
+  alias Forge.Ast.Analysis.Behaviour
   alias Forge.Ast.Analysis.Import
   alias Forge.Ast.Analysis.Require
   alias Forge.Ast.Analysis.Scope
@@ -99,6 +100,12 @@ defmodule Forge.Ast.Analysis.State do
   def push_use(%__MODULE__{} = state, %Use{} = use) do
     update_current_scope(state, fn %Scope{} = scope ->
       Map.update!(scope, :uses, &[use | &1])
+    end)
+  end
+
+  def push_behaviour(%__MODULE__{} = state, %Behaviour{} = behaviour) do
+    update_current_scope(state, fn %Scope{} = scope ->
+      Map.update!(scope, :behaviours, &[behaviour | &1])
     end)
   end
 

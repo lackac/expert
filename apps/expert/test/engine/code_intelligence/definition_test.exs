@@ -693,4 +693,33 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       entries
     end
   end
+
+  describe "definition/2 for behaviour callbacks" do
+    # Note: Most @behaviour jump-to-definition functionality is handled by ElixirSense.
+    # Our implementation adds behaviour tracking in scopes which can be used for
+    # future enhancements like better @impl resolution.
+
+    test "behaviour tracking works in scopes" do
+      # This is more of an integration test to ensure our behaviour tracking
+      # doesn't break existing functionality
+      code = """
+      defmodule MyImpl do
+        @behaviour GenServer
+
+        @impl true
+        def init(arg), do: {:ok, arg}
+      end
+      """
+
+      doc = Document.new("file:///test.ex", code, 1)
+      {:ok, _doc, analysis} = Document.Store.fetch(doc.uri, :analysis)
+
+      # Verify that behaviours are tracked in the scope
+      scope =
+        Enum.find(analysis.scopes, fn s -> s.module == [:MyImpl] and length(s.behaviours) > 0 end)
+
+      assert scope != nil
+      assert length(scope.behaviours) == 1
+    end
+  end
 end

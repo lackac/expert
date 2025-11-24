@@ -1,5 +1,6 @@
 defmodule Forge.Ast.Analysis.Scope do
   alias Forge.Ast.Analysis.Alias
+  alias Forge.Ast.Analysis.Behaviour
   alias Forge.Document.Position
   alias Forge.Document.Range
 
@@ -10,7 +11,8 @@ defmodule Forge.Ast.Analysis.Scope do
     aliases: [],
     imports: [],
     requires: [],
-    uses: []
+    uses: [],
+    behaviours: []
   ]
 
   @type import_mfa :: {module(), atom(), non_neg_integer()}
@@ -21,7 +23,8 @@ defmodule Forge.Ast.Analysis.Scope do
           range: Range.t(),
           module: [atom()],
           aliases: [Alias.t()],
-          imports: [import_mfa()]
+          imports: [import_mfa()],
+          behaviours: [Behaviour.t()]
         }
 
   def new(%__MODULE__{} = parent_scope, id, %Range{} = range, module \\ []) do

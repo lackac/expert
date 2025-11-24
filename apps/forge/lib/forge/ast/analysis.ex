@@ -6,6 +6,7 @@ defmodule Forge.Ast.Analysis do
   """
 
   alias Forge.Ast.Analysis.Alias
+  alias Forge.Ast.Analysis.Behaviour
   alias Forge.Ast.Analysis.Import
   alias Forge.Ast.Analysis.Require
   alias Forge.Ast.Analysis.Scope
@@ -392,6 +393,15 @@ defmodule Forge.Ast.Analysis do
          state
        ) do
     State.push_use(state, Use.new(state.document, use, module, opts))
+  end
+
+  # @behaviour MyModule
+  defp analyze_node(
+         {:@, _meta, [{:behaviour, _, [{:__aliases__, _, module}]}]} = behaviour_ast,
+         state
+       ) do
+    expanded_module = expand_alias(module, state)
+    State.push_behaviour(state, Behaviour.new(state.document, behaviour_ast, expanded_module))
   end
 
   # stab clauses: ->
