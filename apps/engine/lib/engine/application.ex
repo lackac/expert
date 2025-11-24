@@ -23,7 +23,8 @@ defmodule Engine.Application do
            [
              &Engine.Search.Indexer.create_index/1,
              &Engine.Search.Indexer.update_index/2
-           ]}
+           ]},
+          Engine.StdlibCache
         ]
       else
         []

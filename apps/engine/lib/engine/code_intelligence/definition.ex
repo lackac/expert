@@ -2,6 +2,7 @@ defmodule Engine.CodeIntelligence.Definition do
   alias ElixirSense.Providers.Location, as: ElixirSenseLocation
   alias Engine.CodeIntelligence.Entity
   alias Engine.Search.Store
+  alias Engine.StdlibDefinition
   alias Forge.Ast
   alias Forge.Ast.Analysis
   alias Forge.Document
@@ -85,7 +86,14 @@ defmodule Engine.CodeIntelligence.Definition do
       [] ->
         Logger.info("No definition found for #{inspect(resolved)} with Indexer.")
 
-        elixir_sense_definition(analysis, position)
+        # Try stdlib before falling back to ElixirSense
+        case stdlib_definition(resolved, analysis, position) do
+          {:ok, location} when not is_nil(location) ->
+            {:ok, location}
+
+          _ ->
+            elixir_sense_definition(analysis, position)
+        end
 
       [location] ->
         {:ok, location}
@@ -94,6 +102,21 @@ defmodule Engine.CodeIntelligence.Definition do
         {:ok, locations}
     end
   end
+
+  defp stdlib_definition({:module, module}, _analysis, _position) when is_atom(module) do
+    StdlibDefinition.find_module_definition(module)
+  end
+
+  defp stdlib_definition({:struct, module}, _analysis, _position) when is_atom(module) do
+    StdlibDefinition.find_struct_definition(module)
+  end
+
+  defp stdlib_definition({:call, module, function, arity}, _analysis, _position)
+       when is_atom(module) and is_atom(function) do
+    StdlibDefinition.find_function_definition(module, function, arity)
+  end
+
+  defp stdlib_definition(_, _, _), do: {:ok, nil}
 
   defp elixir_sense_definition(%Analysis{} = analysis, %Position{} = position) do
     analysis.document

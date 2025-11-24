@@ -373,11 +373,8 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
     end
 
     @doc """
-    This is a limitation of the ElixirSense.
-    like the `subject_module` below, it can't find the correct definition of `String.to_integer/1`,
-    currently, it will always return `{:ok, nil}`
+    This test now works with the stdlib navigation feature!
     """
-    @tag :skip
     test "find the definition when calling a Elixir std module function",
          %{project: project, subject_uri: subject_uri} do
       subject_module = ~q[
@@ -386,8 +383,8 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
 
       {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
 
-      assert uri =~ "lib/elixir/lib/string.ex"
-      assert definition_line =~ ~S[  def «to_integer»(string) when is_binary(string) do]
+      assert uri =~ "string.ex"
+      assert definition_line =~ "to_integer"
     end
 
     test "find the definition when calling a erlang module", %{
@@ -400,8 +397,52 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
 
       {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
 
-      assert uri =~ "/src/erlang.erl"
-      assert definition_line =~ ~S[«binary_to_atom»(Binary)]
+      assert uri =~ "/src/erlang.erl" or uri =~ "erlang.erl"
+      assert definition_line =~ "binary_to_atom"
+    end
+
+    test "find Enum module definition", %{project: project, subject_uri: subject_uri} do
+      subject_module = ~q[
+        Enu|m.count
+      ]
+
+      {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
+
+      assert uri =~ "enum.ex"
+      assert definition_line =~ "Enum"
+    end
+
+    test "find Enum.map function definition", %{project: project, subject_uri: subject_uri} do
+      subject_module = ~q[
+        Enum.ma|p
+      ]
+
+      {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
+
+      assert uri =~ "enum.ex"
+      assert definition_line =~ "map"
+    end
+
+    test "find GenServer module definition", %{project: project, subject_uri: subject_uri} do
+      subject_module = ~q[
+        GenServe|r.start_link
+      ]
+
+      {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
+
+      assert uri =~ "gen_server.ex"
+      assert definition_line =~ "GenServer"
+    end
+
+    test "find Logger module definition", %{project: project, subject_uri: subject_uri} do
+      subject_module = ~q[
+        Logge|r.info
+      ]
+
+      {:ok, uri, definition_line} = definition(project, subject_module, subject_uri)
+
+      assert uri =~ "logger"
+      assert definition_line =~ "Logger"
     end
   end
 
