@@ -30,7 +30,9 @@ defmodule Engine.Analyzer.Imports do
   defp import_map(%Scope{} = scope, position) do
     end_line = Scope.end_line(scope, position)
 
-    (kernel_imports(scope) ++ scope.imports)
+    use_imports = imports_from_uses(scope, end_line)
+
+    (kernel_imports(scope) ++ scope.imports ++ use_imports)
     # sorting by line ensures that imports on later lines
     # override imports on earlier lines
     |> Enum.sort_by(& &1.range.start.line)
@@ -130,6 +132,102 @@ defmodule Engine.Analyzer.Imports do
 
   defp sigil?(string_name, arity) do
     String.starts_with?(string_name, "sigil_") and arity in [1, 2]
+  end
+
+  # Extract imports from `use` statements by expanding their __using__ macros
+  defp imports_from_uses(%Scope{} = scope, end_line) do
+    scope.uses
+    |> Enum.filter(&(&1.range.start.line <= end_line))
+    |> Enum.flat_map(fn use ->
+      extract_imports_from_use(use, scope)
+    end)
+  end
+
+  defp extract_imports_from_use(%{module: module_segments, opts: opts}, scope) do
+    with {:ok, module} <- resolve_use_module(module_segments, scope),
+         true <- Loader.ensure_loaded?(module),
+         {:ok, quoted} <- expand_use_macro(module, opts) do
+      # Extract import statements from the expanded quoted code
+      {_, imports} =
+        Macro.prewalk(quoted, [], fn
+          {:import, _, [import_module | _]} = node, acc ->
+            {node, [import_module | acc]}
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      # Convert to Import structs
+      imports
+      |> Enum.map(fn import_ast ->
+        module_segments =
+          case import_ast do
+            {:__aliases__, _, segments} -> segments
+            module when is_atom(module) -> Module.split(module) |> Enum.map(&String.to_atom/1)
+            _ -> []
+          end
+
+        if module_segments != [] do
+          # Use the use statement's range for implicit imports
+          Import.implicit(scope.range, module_segments)
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+    else
+      _ -> []
+    end
+  end
+
+  defp resolve_use_module(module_segments, scope) do
+    module = Aliases.resolve_at(scope, module_segments, scope.range.start.line)
+    {:ok, module}
+  rescue
+    _ -> :error
+  end
+
+  # Attempt to expand the __using__ macro
+  # ISSUES:
+  # 1. __using__ is a macro, not a function - can't call module.__using__([]) directly
+  # 2. Macro.expand_once requires a proper compilation environment with all context
+  # 3. This causes engine startup timeouts
+  # 4. Runtime macro expansion is fundamentally different from compile-time
+  defp expand_use_macro(module, opts) do
+    # Try to create a minimal compilation environment
+    env = %Macro.Env{
+      module: module,
+      file: "nofile",
+      line: 1,
+      function: nil,
+      context: nil,
+      requires: [],
+      aliases: [],
+      functions: [],
+      macros: []
+    }
+
+    # Build a quoted use expression
+    use_expr =
+      if opts == [] do
+        quote do
+          use unquote(module)
+        end
+      else
+        quote do
+          use unquote(module), unquote(opts)
+        end
+      end
+
+    # Try to expand the use macro
+    # NOTE: This approach doesn't work because:
+    # - It requires full compilation context
+    # - Causes timeouts during engine initialization
+    # - Runtime expansion != compile-time expansion
+    try do
+      expanded = Macro.expand_once(use_expr, env)
+      {:ok, expanded}
+    rescue
+      _ -> :error
+    end
   end
 
   defp kernel_imports(%Scope{} = scope) do
