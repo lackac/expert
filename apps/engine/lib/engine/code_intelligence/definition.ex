@@ -1,4 +1,24 @@
 defmodule Engine.CodeIntelligence.Definition do
+  @moduledoc """
+  Provides jump-to-definition functionality with best-effort arity matching.
+
+  When an exact function arity match is not found (e.g., user refactored func/3 to func/4),
+  this module falls back to the closest available arity using distance-based matching:
+
+  - Distance = abs(available_arity - target_arity)
+  - Selects minimum distance
+  - Tie-breaker: prefers lowest arity
+
+  ## Examples
+
+      # Exact match: finds func/3
+      definition(document, position_at_func_call_with_3_args)
+
+      # Fallback: calling func/2 when only func/1 and func/3 exist
+      # Both have distance 1, prefers func/1 (lowest)
+      definition(document, position_at_func_call_with_2_args)
+  """
+
   alias ElixirSense.Providers.Location, as: ElixirSenseLocation
   alias Engine.CodeIntelligence.Entity
   alias Engine.Search.Store
@@ -52,7 +72,7 @@ defmodule Engine.CodeIntelligence.Definition do
 
     definitions =
       mfa
-      |> query_search_index(subtype: :definition)
+      |> query_with_fallback(subtype: :definition)
       |> Stream.flat_map(fn entry ->
         case entry do
           %Entry{type: {:function, :delegate}} ->
@@ -178,6 +198,124 @@ defmodule Engine.CodeIntelligence.Definition do
 
       _ ->
         []
+    end
+  end
+
+  # Queries the search index with best-effort arity matching.
+  # First tries an exact match. If no results are found, attempts to find
+  # the closest available arity using distance-based matching.
+  defp query_with_fallback(subject, condition) do
+    case query_search_index(subject, condition) do
+      [] ->
+        # No exact match found, try arity fallback
+        query_closest_arity(subject, condition)
+
+      entries ->
+        entries
+    end
+  end
+
+  # Queries for the closest available arity when exact match fails.
+  # Uses prefix matching to find all available arities for the given
+  # module and function, then selects the closest one based on distance.
+  defp query_closest_arity(subject, condition) do
+    with {:ok, target_arity} <- extract_arity_from_subject(subject),
+         prefix <- build_function_prefix(subject),
+         {:ok, entries} <- Store.prefix(prefix, condition),
+         filtered_entries <- Enum.filter(entries, &match_function_pattern?(&1.subject, prefix)) do
+      select_closest_arity_entries(filtered_entries, target_arity)
+    else
+      _ -> []
+    end
+  end
+
+  # Extracts the arity from a subject string like "Module.func/3".
+  defp extract_arity_from_subject(subject) when is_binary(subject) do
+    case String.split(subject, "/") do
+      [_prefix, arity_str] ->
+        case Integer.parse(arity_str) do
+          {arity, ""} -> {:ok, arity}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  # Builds a prefix for function matching from a subject like "Module.func/3".
+  # Returns "Module.func/" which can be used for prefix queries.
+  defp build_function_prefix(subject) when is_binary(subject) do
+    case String.split(subject, "/") do
+      [prefix, _arity] -> prefix <> "/"
+      _ -> subject
+    end
+  end
+
+  # Checks if a subject matches the function prefix pattern.
+  # This ensures we only match functions with the same module and name,
+  # not partial matches.
+  defp match_function_pattern?(subject, prefix) do
+    String.starts_with?(subject, prefix) and
+      case String.split(String.trim_leading(subject, prefix), "/") do
+        [arity_str] ->
+          case Integer.parse(arity_str) do
+            {_arity, ""} -> true
+            _ -> false
+          end
+
+        _ ->
+          false
+      end
+  end
+
+  # Selects entries with the closest arity to the target.
+  # Algorithm:
+  # - Calculate distance = abs(available_arity - target_arity)
+  # - Select entries with minimum distance
+  # - Tie-breaker: prefer lowest arity
+  defp select_closest_arity_entries([], _target_arity), do: []
+
+  defp select_closest_arity_entries(entries, target_arity) do
+    # Group entries by arity and calculate distances
+    entries_with_distance =
+      entries
+      |> Enum.map(fn entry ->
+        case extract_arity_from_subject(entry.subject) do
+          {:ok, arity} ->
+            distance = abs(arity - target_arity)
+            {entry, arity, distance}
+
+          :error ->
+            nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case entries_with_distance do
+      [] ->
+        []
+
+      entries_with_distance ->
+        # Find minimum distance
+        min_distance =
+          entries_with_distance
+          |> Enum.map(fn {_entry, _arity, distance} -> distance end)
+          |> Enum.min()
+
+        # Filter entries with minimum distance
+        closest_entries =
+          entries_with_distance
+          |> Enum.filter(fn {_entry, _arity, distance} -> distance == min_distance end)
+
+        # If tie, prefer lowest arity
+        {entry, _arity, _distance} =
+          Enum.min_by(closest_entries, fn {_entry, arity, _distance} -> arity end)
+
+        # Return all entries with the same subject (same arity but different clauses)
+        selected_subject = entry.subject
+
+        Enum.filter(entries, fn e -> e.subject == selected_subject end)
     end
   end
 end

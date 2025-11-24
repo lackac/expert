@@ -647,6 +647,143 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
     end
   end
 
+  describe "definition/2 with best-effort arity matching" do
+    setup [:with_referenced_file]
+
+    test "finds exact match when available (no regression)", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_exact_match() do
+            ArityFallback.singl|e_arity(1, 2, 3)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      assert definition_line == ~S[  def «single_arity(x, y, z)» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+
+    test "falls back to closest arity when exact match not found (+1 case)", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_arity_plus_one() do
+            # Calling with arity 2, but only 1 and 3 exist
+            # Should fall back to arity 3 (distance 1)
+            ArityFallback.proces|s(1, 2)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      assert definition_line == ~S[  def «process(value, opts, callback)» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+
+    test "falls back to closest arity when exact match not found (-1 case)", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_arity_minus_one() do
+            # Calling with arity 2, but only 1 and 3 exist
+            # Should fall back to arity 1 (distance 1, but prefer lower arity)
+            ArityFallback.proces|s(1, 2)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      # Both arity 1 and 3 have distance 1, but we prefer the lowest arity (1)
+      assert definition_line == ~S[  def «process(value)» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+
+    test "prefers lowest arity when multiple arities have same distance", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_tie_breaker() do
+            # Calling with arity 3, but only 0, 2, 4 exist
+            # Arity 2 has distance 1, arity 4 has distance 1
+            # Should prefer arity 2 (lowest)
+            ArityFallback.transfor|m(1, 2, 3)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      assert definition_line == ~S[  def «transform(a, b)» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+
+    test "finds closest arity across many options", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_many_arities() do
+            # Calling with arity 6, available: 1, 2, 3, 4, 5
+            # Arity 5 has distance 1 (closest)
+            ArityFallback.calculat|e(1, 2, 3, 4, 5, 6)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      assert definition_line == ~S[  def «calculate(a, b, c, d, e)» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+
+    test "handles case when calling with arity 0 but only higher arities exist", %{
+      project: project,
+      uri: _referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesArityFallback do
+          alias ArityFallback
+
+          def test_arity_zero() do
+            # Calling with arity 1, but only 0, 2, 4 exist
+            # Should fall back to arity 0 (distance 1) or arity 2 (distance 1)
+            # Prefer arity 0 (lowest)
+            ArityFallback.transfor|m(1)
+          end
+        end
+      ]
+
+      {:ok, referenced_uri, definition_line} = definition(project, subject_module, nil)
+
+      assert definition_line == ~S[  def «transform()» do]
+      assert referenced_uri =~ "navigations/lib/arity_fallback_test.ex"
+    end
+  end
+
   describe "edge cases" do
     setup [:with_referenced_file]
 
