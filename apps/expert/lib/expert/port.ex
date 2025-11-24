@@ -62,7 +62,14 @@ defmodule Expert.Port do
     # or we get an incomplete PATH not including erl or any other version manager
     # managed programs.
 
-    env = [{"SHELL_SESSIONS_DISABLE", "1"}]
+    env = [
+      {"SHELL_SESSIONS_DISABLE", "1"},
+      {"IN_NIX_SHELL", nil},
+      {"DIRENV_DIFF", nil},
+      {"DIRENV_WATCHES", nil},
+      {"DIRENV_DIR", nil},
+      {"DIRENV_FILE", nil}
+    ]
 
     path =
       case Path.basename(shell) do
